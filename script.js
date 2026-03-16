@@ -1,147 +1,175 @@
-/* ─── TRADECALC · script.js ──────────────────────────────────── */
+/* ─── TradeCalc · script.js ──────────────────────────────────── */
 
-// ── Helpers ──────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
 
-function fmt(n) {
+// ── Formatting helpers ────────────────────────────────────────
+function fmtINR(n) {
   return '₹' + Math.abs(n).toLocaleString('en-IN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2
   });
 }
 
-function fmtPct(n) {
-  return (n >= 0 ? '+' : '-') + Math.abs(n).toFixed(2) + '%';
+function fmtDelta(n, capital) {
+  const pct = ((n / capital) * 100).toFixed(2);
+  return (n >= 0 ? '+' : '−') + fmtINR(Math.abs(n)) + ' (' + (n >= 0 ? '+' : '−') + Math.abs(pct) + '% on capital)';
 }
 
-function showError(msg) {
-  $('errorMsg').textContent = msg;
+function showError(msg) { $('errorMsg').textContent = msg; }
+function clearError()   { $('errorMsg').textContent = ''; }
+
+// ── Mode tab selection ────────────────────────────────────────
+function selectMode(btn) {
+  document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+
+  const isCustom = btn.dataset.value === 'custom';
+  $('customMarginWrap').classList.toggle('hidden', !isCustom);
+  if (isCustom) $('customMargin').focus();
 }
 
-function clearError() {
-  $('errorMsg').textContent = '';
+// ── Get active margin ─────────────────────────────────────────
+function getMargin() {
+  const activeTab = document.querySelector('.mode-tab.active');
+  if (!activeTab) return null;
+
+  const val = activeTab.dataset.value;
+  if (val === 'custom') {
+    const cm = parseFloat($('customMargin').value);
+    if (isNaN(cm) || cm < 1 || cm > 20) return null;
+    return { value: cm, label: `Custom · ${cm}× Margin` };
+  }
+  const num = parseFloat(val);
+  const label = num === 5
+    ? 'Intraday Trading · 5× Margin'
+    : 'MFT / Swing Trading · 3.4× Margin';
+  return { value: num, label };
 }
 
-// ── Main Calculate ─────────────────────────────────────────────
+// ── Main calculate ────────────────────────────────────────────
 function calculate() {
   clearError();
 
-  const margin   = parseFloat($('tradingMode').value);
-  const capital  = parseFloat($('capital').value);
-  const gainPct  = parseFloat($('gainPct').value);
-  const slPct    = parseFloat($('slPct').value);
-
-  // Validation
-  if (isNaN(capital) || capital <= 0) {
-    showError('⚠ Please enter a valid capital amount.');
+  const marginData = getMargin();
+  if (!marginData) {
+    showError('⚠ Please enter a valid custom margin between 1× and 20×.');
     return;
+  }
+
+  const capital = parseFloat($('capital').value);
+  const gainPct = parseFloat($('gainPct').value);
+  const slPct   = parseFloat($('slPct').value);
+
+  if (isNaN(capital) || capital <= 0) {
+    showError('⚠ Please enter a valid capital amount.'); return;
   }
   if (isNaN(gainPct) || gainPct < 0) {
-    showError('⚠ Please enter a valid gain percentage.');
-    return;
+    showError('⚠ Please enter a valid expected gain %.'); return;
   }
   if (isNaN(slPct) || slPct < 0) {
-    showError('⚠ Please enter a valid stop loss percentage.');
-    return;
+    showError('⚠ Please enter a valid stop loss %.'); return;
   }
 
-  // Core calculations
+  const { value: margin, label: modeName } = marginData;
   const tradeSize = capital * margin;
 
-  const gains = [gainPct, gainPct * 2, gainPct * 3];
+  // Profit scenarios
+  const gains   = [gainPct, gainPct * 2, gainPct * 3];
   const profits = gains.map(g => tradeSize * (g / 100));
 
+  // Loss
   const loss = tradeSize * (slPct / 100);
 
-  const capAfterProfit = capital + profits[0];
-  const capAfterLoss   = capital - loss;
-
-  const modeName = margin === 5
-    ? 'Intraday Trading · 5× Margin'
-    : 'MFT / Swing Trading · 3.4× Margin';
-
-  // ── Populate Results ─────────────────────────────────────
-  $('resultsMeta').textContent =
-    `${modeName}  ·  Capital: ${fmt(capital)}`;
-
-  $('tradeSizeDisplay').textContent = fmt(tradeSize);
-  $('marginNote').textContent       = `${margin}× of ${fmt(capital)}`;
-
-  // Profit scenarios
-  const scenarioContainer = $('profitScenarios');
-  scenarioContainer.innerHTML = '';
-
-  const labels = ['Base', 'Double', 'Triple'];
-  gains.forEach((g, i) => {
-    const card = document.createElement('div');
-    card.className = 'scenario-card';
-    card.innerHTML = `
-      <div class="sc-badge">${labels[i]} · ${g.toFixed(1)}%</div>
-      <div class="sc-profit">${fmt(profits[i])}</div>
-      <div class="sc-sub">Trade size × ${g.toFixed(1)}%</div>
-    `;
-    scenarioContainer.appendChild(card);
-  });
-
-  // Loss card
-  $('lossCard').innerHTML = `
-    <div class="loss-main">
-      <div class="loss-label">Max Loss at Stop Loss (${slPct.toFixed(2)}%)</div>
-      <div class="loss-value">−${fmt(loss)}</div>
-    </div>
-    <div class="loss-info">
-      Trade Size: ${fmt(tradeSize)}<br/>
-      Risk: ${slPct.toFixed(2)}% of position
-    </div>
-  `;
-
   // Capital impact
-  const capAfterProfitDelta = fmtPct((profits[0] / capital) * 100);
-  const capAfterLossDelta   = fmtPct(-(loss / capital) * 100);
+  const capGain = capital + profits[0];
+  const capLoss = capital - loss;
 
-  $('capitalGrid').innerHTML = `
-    <div class="capital-card after-gain">
-      <div class="cap-label">Capital After Gain (Base)</div>
-      <div class="cap-value">${fmt(capAfterProfit)}</div>
-      <div class="cap-delta">${capAfterProfitDelta} on invested capital</div>
+  // ── Populate DOM ─────────────────────────────────────────
+
+  $('ridMode').textContent = modeName;
+
+  $('tradeSizeVal').textContent = fmtINR(tradeSize);
+  $('tradeSizeSub').textContent = `${margin}× leverage on ${fmtINR(capital)}`;
+  $('capitalStat').textContent  = fmtINR(capital);
+  $('leverageStat').textContent = `${margin}×`;
+
+  // Profit cards
+  const labels = ['Base', 'Double', 'Triple'];
+  $('profitScenarios').innerHTML = gains.map((g, i) => `
+    <div class="profit-card">
+      <div class="pc-badge">${labels[i]} · +${g.toFixed(1)}%</div>
+      <div class="pc-value">${fmtINR(profits[i])}</div>
+      <div class="pc-sub">On ${fmtINR(tradeSize)} position</div>
     </div>
-    <div class="capital-card after-loss">
-      <div class="cap-label">Capital After Stop Loss</div>
-      <div class="cap-value">${fmt(capAfterLoss)}</div>
-      <div class="cap-delta">${capAfterLossDelta} on invested capital</div>
+  `).join('');
+
+  // Loss block
+  $('lossBlock').innerHTML = `
+    <div class="loss-top">
+      <span class="bl-dot loss-dot"></span>Stop Loss Hit · ${slPct.toFixed(2)}%
+    </div>
+    <div class="loss-amt">−${fmtINR(loss)}</div>
+    <div class="loss-detail">
+      Position: ${fmtINR(tradeSize)}<br/>
+      Risk: ${slPct.toFixed(2)}% of trade size
     </div>
   `;
 
-  // Risk/Reward bar
-  const rrRatio = slPct > 0 ? (gainPct / slPct).toFixed(2) : '∞';
-  $('rrRatio').textContent = `R:R = 1 : ${rrRatio}`;
-
+  // R:R block
+  const rrVal = slPct > 0 ? (gainPct / slPct).toFixed(2) : '∞';
   const total = profits[0] + loss;
-  const rewardWidth = total > 0 ? ((profits[0] / total) * 100).toFixed(1) : 50;
-  const riskWidth   = total > 0 ? ((loss       / total) * 100).toFixed(1) : 50;
+  const gw = total > 0 ? ((profits[0] / total) * 100).toFixed(1) : 50;
+  const lw = total > 0 ? ((loss / total) * 100).toFixed(1) : 50;
 
-  $('rewardBar').style.width = rewardWidth + '%';
-  $('riskBar').style.width   = riskWidth   + '%';
+  $('rrBlock').innerHTML = `
+    <div>
+      <div class="rr-top">Risk / Reward Ratio</div>
+      <div class="rr-ratio">1 : ${rrVal}</div>
+    </div>
+    <div>
+      <div class="rr-track">
+        <div class="rr-gain-bar" style="width:${gw}%"></div>
+        <div class="rr-loss-bar" style="width:${lw}%"></div>
+      </div>
+      <div class="rr-labels">
+        <span style="color:var(--gain)">Reward ${gw}%</span>
+        <span style="color:var(--loss)">Risk ${lw}%</span>
+      </div>
+    </div>
+  `;
 
-  // ── Switch View ────────────────────────────────────────────
+  // Capital row
+  $('capitalRow').innerHTML = `
+    <div class="cap-card gain-cap">
+      <div class="cap-label">Capital After Gain (Base)</div>
+      <div class="cap-value">${fmtINR(capGain)}</div>
+      <div class="cap-delta">${fmtDelta(profits[0], capital)}</div>
+    </div>
+    <div class="cap-card loss-cap">
+      <div class="cap-label">Capital After Stop Loss</div>
+      <div class="cap-value">${fmtINR(capLoss)}</div>
+      <div class="cap-delta">${fmtDelta(-loss, capital)}</div>
+    </div>
+  `;
+
+  // Switch view
   $('inputView').classList.add('hidden');
   $('resultsView').classList.remove('hidden');
-
-  // Scroll top of card
   $('calculatorCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-// ── Recalculate ─────────────────────────────────────────────
+// ── Recalculate ───────────────────────────────────────────────
 function recalculate() {
   $('resultsView').classList.add('hidden');
   $('inputView').classList.remove('hidden');
   $('calculatorCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-// ── Enter key support ──────────────────────────────────────
+// ── Enter key ─────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-  ['capital', 'gainPct', 'slPct'].forEach(id => {
-    $(id).addEventListener('keydown', e => {
+  ['capital', 'gainPct', 'slPct', 'customMargin'].forEach(id => {
+    const el = $(id);
+    if (el) el.addEventListener('keydown', e => {
       if (e.key === 'Enter') calculate();
     });
   });
